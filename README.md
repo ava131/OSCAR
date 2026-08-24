@@ -405,3 +405,5 @@ Override per `bash rotation/<model>/save_qkv_<model>.sh ENV=val`:
 For OSCAR + SGLang setup notes for Qwen3.5-4B with AISBench evaluation on 2x V100, see [docs/qwen35-4b-v100-aisbench.md](docs/qwen35-4b-v100-aisbench.md).
 
 A ready-to-edit launcher is available at [scripts/start_qwen35_4b_oscar_sglang.sh](scripts/start_qwen35_4b_oscar_sglang.sh).
+
+For Docker-based setup with `uv` and a project-local `.venv`, see [docs/docker-uv-qwen35-4b-v100.md](docs/docker-uv-qwen35-4b-v100.md).
