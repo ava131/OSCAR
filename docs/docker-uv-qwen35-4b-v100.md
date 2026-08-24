@@ -153,43 +153,62 @@ PY
 
 ## 7. Download Qwen3.5-4B
 
-Install Hugging Face CLI only if it is missing:
+Use the current Hugging Face CLI command, `hf`. With `uv`, the cleanest
+form is `uvx hf ...`, which runs the CLI in an isolated tool environment
+instead of installing it into this project's `.venv`.
+
+Check the CLI:
 
 ```bash
-uv pip install huggingface_hub
+uvx hf --help
 ```
 
-Download the model:
+If the model requires authentication, log in:
+
+```bash
+uvx hf auth login
+uvx hf auth whoami
+```
+
+For non-interactive Docker jobs, prefer an environment variable:
+
+```bash
+export HF_TOKEN=hf_xxx
+uvx hf auth whoami
+```
+
+Download the model. The `hf download` command writes directly to the target
+directory when `--local-dir` is set:
 
 ```bash
 mkdir -p /data/models
 
-huggingface-cli download Qwen/Qwen3.5-4B \
-  --local-dir /data/models/Qwen3.5-4B \
-  --local-dir-use-symlinks False
+uvx hf download Qwen/Qwen3.5-4B \
+  --local-dir /data/models/Qwen3.5-4B
 ```
 
 If you use the instruction model, replace the repo id:
 
 ```bash
-huggingface-cli download Qwen/Qwen3.5-4B-Instruct \
-  --local-dir /data/models/Qwen3.5-4B-Instruct \
-  --local-dir-use-symlinks False
+uvx hf download Qwen/Qwen3.5-4B-Instruct \
+  --local-dir /data/models/Qwen3.5-4B-Instruct
 ```
 
 ## 8. Download OSCAR Rotation Zoo
 
 ```bash
-git lfs install
-git clone https://huggingface.co/Zhongzhu/OSCAR-RotationZoo rotzoo
+uvx hf download Zhongzhu/OSCAR-RotationZoo \
+  --repo-type model \
+  --local-dir rotzoo
 ```
 
-If the container does not have Git LFS:
+To download only Qwen3.5-4B rotation files:
 
 ```bash
-apt-get update
-apt-get install -y git-lfs
-git lfs install
+uvx hf download Zhongzhu/OSCAR-RotationZoo \
+  --repo-type model \
+  --include 'Qwen3.5-4B/**' \
+  --local-dir rotzoo
 ```
 
 ## 9. Start Server
@@ -249,15 +268,15 @@ uv pip install torch torchvision torchaudio \
   --index-url https://download.pytorch.org/whl/cu121
 
 uv pip install -e sglang-research/python
-uv pip install huggingface_hub
 
 mkdir -p /data/models
-huggingface-cli download Qwen/Qwen3.5-4B \
-  --local-dir /data/models/Qwen3.5-4B \
-  --local-dir-use-symlinks False
+uvx hf download Qwen/Qwen3.5-4B \
+  --local-dir /data/models/Qwen3.5-4B
 
-git lfs install
-git clone https://huggingface.co/Zhongzhu/OSCAR-RotationZoo rotzoo
+uvx hf download Zhongzhu/OSCAR-RotationZoo \
+  --repo-type model \
+  --include 'Qwen3.5-4B/**' \
+  --local-dir rotzoo
 
 chmod +x scripts/start_qwen35_4b_oscar_sglang.sh
 MODEL_PATH=/data/models/Qwen3.5-4B \
