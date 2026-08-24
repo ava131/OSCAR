@@ -232,20 +232,31 @@ nvidia-smi -L
 unset CUDA_VISIBLE_DEVICES
 ```
 
-## 9. 安装本地 SGLang
+## 9. 完整安装本地 SGLang 和依赖
 
-先不要执行普通 editable 安装，因为它会自动解析整套新依赖：
+`.venv` 是项目隔离环境，因此这里可以让 uv 完整解析和安装 OSCAR vendored SGLang 声明的依赖，不会污染系统 Python 或其他项目。
 
-```text
-不要直接执行：uv pip install -e sglang-research/python
-```
-
-最小安装：
+先确认当前仍在项目环境：
 
 ```bash
 cd /data/OSCAR
 source .venv/bin/activate
-uv pip install --no-deps -e sglang-research/python
+which python
+python -c 'import sys; print(sys.prefix)'
+```
+
+完整安装：
+
+```bash
+uv pip install -e sglang-research/python
+```
+
+这一步会按照 `sglang-research/python/pyproject.toml` 安装包括 torch、transformers、FlashInfer、FlashAttention、SGLang kernel 等依赖，可能需要较长时间和 CUDA 扩展编译。不要再加 `--no-deps`。
+
+如果希望让 uv 明确使用项目环境，也可以写成：
+
+```bash
+uv pip install --python /data/OSCAR/.venv/bin/python -e sglang-research/python
 ```
 
 验证：
@@ -259,28 +270,6 @@ print('cuda:', torch.cuda.is_available())
 print('sglang:', sglang.__file__)
 PY
 ```
-
-如果 traceback 缺少普通 Python 包，逐步补装：
-
-```bash
-uv pip install aiohttp fastapi uvicorn uvloop
-uv pip install transformers sentencepiece tiktoken
-uv pip install numpy scipy einops
-uv pip install requests pydantic orjson
-```
-
-先不要主动安装这些高风险 CUDA 包：
-
-```text
-flash-attn-4
-flashinfer_python
-flashinfer_cubin
-sglang-kernel
-quack-kernels
-torchao
-```
-
-只有 traceback 明确要求、且确认支持 V100 时，才单独安装。
 
 检查：
 
@@ -458,4 +447,3 @@ git submodule status
 - 依赖兼容且网络顺利：1-2 小时；
 - 需要 CUDA 扩展排错：2-4 小时；
 - FA3/FlashInfer 不支持 V100，需要改 backend 或回退版本：4-8 小时。
-
