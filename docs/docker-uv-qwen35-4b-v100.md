@@ -1,288 +1,144 @@
-# OSCAR + Qwen3.5-4B + SGLang in Docker with uv
+# OSCAR + Qwen3.5-4B + SGLang on 2x V100 (Docker + Conda base)
 
-This guide assumes you are already inside a Linux Docker container on the evaluation server.
+这份指南假设你已经进入服务器上的 Linux Docker 容器，并且只能使用 Miniconda 的 `base` 环境。为了减少污染，不重新安装已有依赖；项目本身的 SGLang 使用本地 editable 安装，并关闭依赖自动解析。
 
-Goal:
-
-- avoid Conda entirely;
-- avoid modifying the container's `base` Python environment;
-- use `uv` to create a project-local `.venv`;
-- install OSCAR's vendored SGLang from local source;
-- run Qwen3.5-4B on 2x V100 for AISBench evaluation.
-
-## 0. Check the Container
-
-Run these inside the Docker container:
+## 1. 检查容器和 base
 
 ```bash
 nvidia-smi
+conda activate base
 python --version
 which python
 ```
 
-You should see both V100 GPUs in `nvidia-smi`.
-
-## 1. Install uv
-
-If the container has network access:
+后续命令都应在 `base` 中执行。先确认 PyTorch 和 GPU：
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-uv --version
+python - <<'PY'
+import torch
+print('torch:', torch.__version__)
+print('torch cuda:', torch.version.cuda)
+print('cuda available:', torch.cuda.is_available())
+print('gpu count:', torch.cuda.device_count())
+for i in range(torch.cuda.device_count()):
+    print(i, torch.cuda.get_device_name(i))
+PY
 ```
 
-If `curl` is unavailable but `pip` exists, this is also acceptable:
+如果这里已经能看到 2 张 V100，跳过 PyTorch 安装。只有 `import torch` 失败时，才按容器 CUDA 版本安装对应 PyTorch；不要盲目覆盖现有版本。
 
-```bash
-python -m pip install --user uv
-export PATH="$HOME/.local/bin:$PATH"
-uv --version
-```
-
-This installs only the `uv` tool under the user directory, not into Conda base packages.
-
-## 2. Clone OSCAR
-
-Use the fork with this guide:
+## 2. 下载 OSCAR
 
 ```bash
 git clone --recursive https://github.com/ava131/OSCAR.git
 cd OSCAR
-```
-
-If submodules were not fetched:
-
-```bash
 git submodule update --init --recursive
 ```
 
-## 3. Create a Local uv Environment
-
-Create `.venv` inside the OSCAR repo:
-
-```bash
-uv venv .venv --python 3.12
-source .venv/bin/activate
-```
-
-Confirm you are using the local environment:
-
-```bash
-which python
-python --version
-```
-
-Expected path shape:
-
-```text
-/path/to/OSCAR/.venv/bin/python
-```
-
-## 4. Install PyTorch
-
-OSCAR's README targets recent SGLang with CUDA 12.8/12.9-era packages. In many Docker images, PyTorch may already be installed. First check:
-
-```bash
-python - <<'PY'
-try:
-    import torch
-    print("torch:", torch.__version__)
-    print("cuda:", torch.version.cuda)
-    print("cuda available:", torch.cuda.is_available())
-    if torch.cuda.is_available():
-        print("gpu0:", torch.cuda.get_device_name(0))
-except Exception as e:
-    print("torch import failed:", repr(e))
-PY
-```
-
-If PyTorch is missing, install a CUDA wheel into `.venv`. For CUDA 12.1:
-
-```bash
-uv pip install torch torchvision torchaudio \
-  --index-url https://download.pytorch.org/whl/cu121
-```
-
-For CUDA 12.8/12.9 images, prefer the wheel index matching the image/toolkit. If your container already has a working PyTorch, skip this step.
-
-## 5. Install Vendored SGLang Locally
-
-OSCAR already vendors SGLang under:
+OSCAR 已经包含实验所需的 SGLang 源码，不需要另行 clone 外部 SGLang：
 
 ```text
 sglang-research/
 sglang-dump-qkv/
 ```
 
-Do not clone another SGLang repo.
+## 3. 最小安装本地 SGLang
 
-Install the eval-side SGLang from local source:
-
-```bash
-uv pip install -e sglang-research/python
-```
-
-If you want to avoid dependency resolution because the container already has the correct packages, use:
+如果需要使用仓库里的修改版 SGLang，执行：
 
 ```bash
-uv pip install --no-deps -e sglang-research/python
+python -m pip install --no-deps -e sglang-research/python
 ```
 
-The `--no-deps` version is the least disruptive. The non-`--no-deps` version is easier when starting from a clean Docker image.
+`--no-deps` 会阻止 pip 重新解析和下载一整套依赖，避免进一步改动 `base`。如果导入时报缺包，再只补装具体缺失的包；不要直接执行无参数的 `pip install -e`。
 
-## 6. Verify Imports
+验证：
 
 ```bash
 python - <<'PY'
-import torch
-import transformers
-import sglang
-
-print("torch:", torch.__version__)
-print("torch cuda:", torch.version.cuda)
-print("transformers:", transformers.__version__)
-print("sglang:", sglang.__file__)
-print("cuda available:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("gpu count:", torch.cuda.device_count())
-    for i in range(torch.cuda.device_count()):
-        print(i, torch.cuda.get_device_name(i))
+import torch, transformers, sglang
+print('torch:', torch.__version__)
+print('transformers:', transformers.__version__)
+print('sglang:', sglang.__file__)
+print('cuda:', torch.cuda.is_available())
 PY
 ```
 
-## 7. Download Qwen3.5-4B
+## 4. 下载模型
 
-Use the current Hugging Face CLI command, `hf`. With `uv`, the cleanest
-form is `uvx hf ...`, which runs the CLI in an isolated tool environment
-instead of installing it into this project's `.venv`.
-
-Check the CLI:
+`huggingface-cli` 已废弃，使用新版 `hf`。如果环境中没有 `hf`，只安装 CLI 工具本身：
 
 ```bash
-uvx hf --help
+python -m pip install --user -U huggingface_hub
+export PATH="$HOME/.local/bin:$PATH"
+hf --help
 ```
 
-If the model requires authentication, log in:
+需要权限时登录：
 
 ```bash
-uvx hf auth login
-uvx hf auth whoami
+hf auth login
 ```
 
-For non-interactive Docker jobs, prefer an environment variable:
+网络不稳定时可先设置镜像和较长超时：
 
 ```bash
-export HF_TOKEN=hf_xxx
-uvx hf auth whoami
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HUB_DOWNLOAD_TIMEOUT=600
+export HF_HUB_ETAG_TIMEOUT=600
 ```
 
-Download the model. The `hf download` command writes directly to the target
-directory when `--local-dir` is set:
+下载 Qwen3.5-4B，并支持断点续传：
 
 ```bash
 mkdir -p /data/models
-
-uvx hf download Qwen/Qwen3.5-4B \
-  --local-dir /data/models/Qwen3.5-4B
+hf download Qwen/Qwen3.5-4B --local-dir /data/models/Qwen3.5-4B --resume-download
 ```
 
-If you use the instruction model, replace the repo id:
+下载 OSCAR 的 Rotation Zoo：
 
 ```bash
-uvx hf download Qwen/Qwen3.5-4B-Instruct \
-  --local-dir /data/models/Qwen3.5-4B-Instruct
+hf download Zhongzhu/OSCAR-RotationZoo --repo-type model --include 'Qwen3.5-4B/**' --local-dir rotzoo --resume-download
 ```
 
-## 8. Download OSCAR Rotation Zoo
+如果仍然报 `LocalEntryNotFound` 或 `error 110`，这是远端连接超时，不是模型文件名错误。先测试：
 
 ```bash
-uvx hf download Zhongzhu/OSCAR-RotationZoo \
-  --repo-type model \
-  --local-dir rotzoo
+curl -I --max-time 20 "$HF_ENDPOINT/Qwen/Qwen3.5-4B/resolve/main/config.json"
 ```
 
-To download only Qwen3.5-4B rotation files:
+若容器不能访问镜像，需要在可联网机器下载后，将模型目录和 `rotzoo` 目录通过 `scp`、共享盘或 Docker volume 放到服务器。
 
-```bash
-uvx hf download Zhongzhu/OSCAR-RotationZoo \
-  --repo-type model \
-  --include 'Qwen3.5-4B/**' \
-  --local-dir rotzoo
-```
-
-## 9. Start Server
-
-Use the provided launcher:
+## 5. 启动 SGLang
 
 ```bash
 chmod +x scripts/start_qwen35_4b_oscar_sglang.sh
-
-MODEL_PATH=/data/models/Qwen3.5-4B \
-ROTATION_ROOT=$PWD/rotzoo/Qwen3.5-4B \
-CUDA_VISIBLE_DEVICES=0,1 \
-TP_SIZE=2 \
-PORT=30000 \
-scripts/start_qwen35_4b_oscar_sglang.sh
+MODEL_PATH=/data/models/Qwen3.5-4B ROTATION_ROOT=$PWD/rotzoo/Qwen3.5-4B CUDA_VISIBLE_DEVICES=0,1 TP_SIZE=2 PORT=30000 scripts/start_qwen35_4b_oscar_sglang.sh
 ```
 
-AISBench can target:
+AISBench 服务地址：`http://127.0.0.1:30000/v1`
+
+V100 不支持 FP8 Tensor Core。若 attention backend 报错，查看参数并必要时使用 Triton decode backend，避免 FP8 KV：
+
+```bash
+python -m sglang.launch_server --help | grep -Ei 'attention|kv'
+```
 
 ```text
-http://127.0.0.1:30000/v1
-```
-
-## 10. If V100 Rejects a Backend
-
-V100 does not support FP8 Tensor Cores and may not support some newer FlashAttention-3 paths.
-
-If server launch fails around attention backend flags, inspect available flags:
-
-```bash
-python -m sglang.launch_server --help | grep -i attention
-python -m sglang.launch_server --help | grep -i kv
-```
-
-Prefer Triton decode backend on V100:
-
-```bash
 --decode-attention-backend triton
 ```
 
-Avoid FP8 KV settings on V100.
-
-## Minimal Command Block
+## 最小命令清单
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-
+conda activate base
 git clone --recursive https://github.com/ava131/OSCAR.git
 cd OSCAR
-
-uv venv .venv --python 3.12
-source .venv/bin/activate
-
-# If torch is not already available in the Docker image:
-uv pip install torch torchvision torchaudio \
-  --index-url https://download.pytorch.org/whl/cu121
-
-uv pip install -e sglang-research/python
-
-mkdir -p /data/models
-uvx hf download Qwen/Qwen3.5-4B \
-  --local-dir /data/models/Qwen3.5-4B
-
-uvx hf download Zhongzhu/OSCAR-RotationZoo \
-  --repo-type model \
-  --include 'Qwen3.5-4B/**' \
-  --local-dir rotzoo
-
-chmod +x scripts/start_qwen35_4b_oscar_sglang.sh
-MODEL_PATH=/data/models/Qwen3.5-4B \
-ROTATION_ROOT=$PWD/rotzoo/Qwen3.5-4B \
-CUDA_VISIBLE_DEVICES=0,1 \
-TP_SIZE=2 \
-PORT=30000 \
-scripts/start_qwen35_4b_oscar_sglang.sh
+python -m pip install --no-deps -e sglang-research/python
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HUB_DOWNLOAD_TIMEOUT=600
+export HF_HUB_ETAG_TIMEOUT=600
+hf download Qwen/Qwen3.5-4B --local-dir /data/models/Qwen3.5-4B --resume-download
+hf download Zhongzhu/OSCAR-RotationZoo --repo-type model --include 'Qwen3.5-4B/**' --local-dir rotzoo --resume-download
+MODEL_PATH=/data/models/Qwen3.5-4B ROTATION_ROOT=$PWD/rotzoo/Qwen3.5-4B CUDA_VISIBLE_DEVICES=0,1 TP_SIZE=2 PORT=30000 scripts/start_qwen35_4b_oscar_sglang.sh
 ```
