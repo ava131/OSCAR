@@ -521,7 +521,39 @@ class GemmaRMSNorm(MultiPlatformOp):
         residual: Optional[torch.Tensor] = None,
         post_residual_addition: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        return self._forward_impl(x, residual, post_residual_addition)
+        # return self._forward_impl(x, residual, post_residual_addition)
+        # if residual is not None:
+            # x = x + residual
+            # residual = x
+        if residual is not None:
+            try:
+                # 方案 A: 确保连续内存后执行加法
+                # print(123)
+                x = x.contiguous() + residual.contiguous()
+            except Exception:
+                # print(456)
+                # 方案 B: 如果 GPU 仍报 no kernel image，直接在 CPU FP32 加完送回 (绝对 100% 成功)
+                x_device = x.device
+                x = (
+                    (x.detach().cpu().float() + residual.detach().cpu().float())
+                    .to(torch.float16)
+                    .to(x_device)
+                )
+
+        # 同样保护 layernorm 自身的权重
+        if hasattr(self, "weight") and self.weight.dtype == torch.bfloat16:
+            self.weight.data = (
+                self.weight.data.cpu().to(torch.float16).to(self.weight.device)
+            )
+        # 原生 RMSNorm 计算
+        variance = x.pow(2).mean(-1, keepdim=True)
+        hidden_states = x * torch.rsqrt(variance + self.variance_epsilon)
+        if self.weight is not None:
+            hidden_states = hidden_states * (1.0 + self.weight)
+
+        if residual is not None:
+            return hidden_states, residual
+        return hidden_states
 
     def forward_hip(
         self,

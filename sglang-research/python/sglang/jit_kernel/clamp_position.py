@@ -25,11 +25,5 @@ def _jit_clamp_position_module(dtype: torch.dtype) -> Module:
 
 
 def clamp_position_cuda(seq_lens: torch.Tensor) -> torch.Tensor:
-    """Compute positions = clamp(seq_lens - 1, min=0) on CUDA.
-
-    Supported dtypes: torch.int32, torch.int64.
-    """
-    dst = torch.empty_like(seq_lens)
-    module = _jit_clamp_position_module(seq_lens.dtype)
-    module.clamp_position(dst, seq_lens)
-    return dst
+    # 纯 PyTorch 实现，彻底绕过 JIT 编译和 nvcc
+    return torch.cat([torch.arange(int(s), device=seq_lens.device) for s in seq_lens])

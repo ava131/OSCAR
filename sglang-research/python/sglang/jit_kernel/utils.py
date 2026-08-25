@@ -88,7 +88,7 @@ def _resolve_kernel_path() -> pathlib.Path:
 
 KERNEL_PATH = _resolve_kernel_path()
 DEFAULT_INCLUDE = [str(KERNEL_PATH / "include")]
-DEFAULT_CFLAGS = ["-std=c++20", "-O3"]
+DEFAULT_CFLAGS = ["-std=c++14", "-O3"]
 DEFAULT_LDFLAGS = []
 CPP_TEMPLATE_TYPE: TypeAlias = Union[int, float, bool, torch.dtype]
 
@@ -277,11 +277,11 @@ def _jit_compile_context():
 # NOTE: this might also be used in __main__.py for compile flags export
 def _get_default_target_flags() -> List[str]:
     if is_hip_runtime():
-        return ["-DUSE_ROCM", "-std=c++20", "-O3"]
+        return ["-DUSE_ROCM", "-std=c++14", "-O3"]
     else:
         return [
             get_jit_cuda_arch().jit_flag,
-            "-std=c++20",
+            "-std=c++14",
             "-O3",
             "--expt-relaxed-constexpr",
         ]

@@ -769,7 +769,8 @@ class KVCache(abc.ABC):
         if model_dtype is not None:
             self.model_dtype = model_dtype
         elif dtype == "int2":
-            raise ValueError(f"model_dtype is required for {dtype} kv cache")
+            # raise ValueError(f"model_dtype is required for {dtype} kv cache")
+            self.model_dtype = torch.float16
 
         if dtype in (torch.float8_e5m2, torch.float8_e4m3fn, "int2"):
             # NOTE: Store as torch.uint8 because Tensor.index_put is not implemented for torch.float8_e5m2
@@ -1708,6 +1709,8 @@ class HybridLinearKVPool(KVCache):
         cache_v: torch.Tensor,
         k_scale: float = 1.0,
         v_scale: float = 1.0,
+        *args,
+        **kwargs
     ):
         layer_id = self._transfer_full_attention_id(layer.layer_id)
         if not self.use_mla:

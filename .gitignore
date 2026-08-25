@@ -41,3 +41,16 @@ node_modules/
 
 # Android / Gradle caches (examples/llama.android)
 .gradle/
+
+.venv/
+
+python312.tar.gz
+
+core
+core.*
+
+rotzoo/
+*.pt
+*.pth
+*.safetensors
+*.bin

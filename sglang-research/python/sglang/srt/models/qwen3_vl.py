@@ -520,15 +520,24 @@ class Qwen3VLMoeVisionModel(nn.Module, RotaryPosMixin):
     def fast_pos_embed_interpolate_from_list(self, grid_thw):
         num_grid_per_side = self.num_grid_per_side
         m_size = self.spatial_merge_size
-        hidden_dim = self.pos_embed.embedding_dim
+        hidden_dim = (
+            self.pos_embed.embedding_dim
+            if hasattr(self.pos_embed, 'embedding_dim')
+            else self.pos_embed.weight.shape[-1]
+        )
+        device = self.device
+
+        # 1. 直接把权重安全地搬到 CPU 并转为 float32
+        pos_embed_weight_cpu = self.pos_embed.weight.data.detach().cpu().float()
 
         outputs = []
         for t, h, w in grid_thw:
+            # 2. 全流程在 CPU 使用 float32 计算坐标
             h_idxs = torch.linspace(
-                0, num_grid_per_side - 1, h, dtype=torch.float32, device=self.device
+                0, num_grid_per_side - 1, h, dtype=torch.float32, device='cpu'
             )
             w_idxs = torch.linspace(
-                0, num_grid_per_side - 1, w, dtype=torch.float32, device=self.device
+                0, num_grid_per_side - 1, w, dtype=torch.float32, device='cpu'
             )
 
             h_floor = h_idxs.to(torch.long)
@@ -539,41 +548,41 @@ class Qwen3VLMoeVisionModel(nn.Module, RotaryPosMixin):
             dh = h_idxs - h_floor
             dw = w_idxs - w_floor
 
-            # Create meshgrid view for all h, w vars
-            dh_grid, dw_grid = torch.meshgrid(dh, dw, indexing="ij")
-            h_floor_grid, w_floor_grid = torch.meshgrid(h_floor, w_floor, indexing="ij")
-            h_ceil_grid, w_ceil_grid = torch.meshgrid(h_ceil, w_ceil, indexing="ij")
+            dh_grid, dw_grid = torch.meshgrid(dh, dw, indexing='ij')
+            h_floor_grid, w_floor_grid = torch.meshgrid(
+                h_floor, w_floor, indexing='ij'
+            )
+            h_ceil_grid, w_ceil_grid = torch.meshgrid(h_ceil, w_ceil, indexing='ij')
 
-            # original computation of weights
-            # w00 = (1 - dh_grid) * (1 - dw_grid)
-            # w01 = (1 - dh_grid) * dw_grid
-            # w10 = dh_grid * (1 - dw_grid)
-            # w11 = dh_grid * dw_grid
-            # we reuse w11 here to avoid duplicate
-            # dh_grid * dw_grid computation
             w11 = dh_grid * dw_grid
             w10 = dh_grid - w11
             w01 = dw_grid - w11
             w00 = 1 - dh_grid - w01
 
-            h_grid = torch.stack([h_floor_grid, h_floor_grid, h_ceil_grid, h_ceil_grid])
-            w_grid = torch.stack([w_floor_grid, w_ceil_grid, w_floor_grid, w_ceil_grid])
+            h_grid = torch.stack(
+                [h_floor_grid, h_floor_grid, h_ceil_grid, h_ceil_grid]
+            )
+            w_grid = torch.stack(
+                [w_floor_grid, w_ceil_grid, w_floor_grid, w_ceil_grid]
+            )
             h_grid_idx = h_grid * num_grid_per_side
 
             indices = (h_grid_idx + w_grid).reshape(4, -1)
             weights = torch.stack([w00, w01, w10, w11], dim=0).reshape(4, -1, 1)
-            weights = weights.to(dtype=self.dtype)
 
-            embeds = self.pos_embed(indices)
-            embeds *= weights
-            combined = embeds.sum(dim=0)
+            # 3. 在 CPU 端安全查表与加权求和（完全不调用 GPU 内核）
+            embeds = torch.nn.functional.embedding(indices, pos_embed_weight_cpu)
+            combined = (embeds * weights).sum(dim=0)
 
+            # 4. Reshape 与 Permute
             combined = combined.reshape(
                 h // m_size, m_size, w // m_size, m_size, hidden_dim
             )
             combined = combined.permute(0, 2, 1, 3, 4).reshape(1, -1, hidden_dim)
             repeated = combined.expand(t, -1, -1).reshape(-1, hidden_dim)
-            outputs.append(repeated)
+
+            # 5. 计算完成后直接转为 float16 放入 GPU
+            outputs.append(repeated.to(device=device, dtype=torch.float16))
 
         return torch.cat(outputs, dim=0)
 
@@ -1086,6 +1095,8 @@ class Qwen3VLForConditionalGeneration(nn.Module):
             prefix=add_prefix("model.visual", prefix),
             use_data_parallel=self.use_data_parallel,
         )
+        if hasattr(self, "visual"):
+            self.visual = self.visual.to(torch.float16)
 
         # TODO: make it more elegant
         if language_model_cls is Qwen3LLMModel:
@@ -1227,6 +1238,22 @@ class Qwen3VLForConditionalGeneration(nn.Module):
                 otherwise it will be `(seq_len,).
                 (Use input_metadata.mrope_positions to replace it)
         """
+        if hasattr(self, "language_model") and hasattr(
+            self.language_model, "model"
+        ):
+            if (
+                hasattr(self.language_model.model, "embed_tokens")
+                and self.language_model.model.embed_tokens.weight.dtype
+                == torch.bfloat16
+            ):
+                self.language_model.model.embed_tokens.weight.data = (
+                    self.language_model.model.embed_tokens.weight.data.to(
+                        torch.float16
+                    )
+                )
+
+
+
         if self.is_mrope_enabled:
             positions = forward_batch.mrope_positions
 

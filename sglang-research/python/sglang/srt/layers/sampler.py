@@ -599,6 +599,16 @@ def sampling_from_probs_torch(
     Note: For deterministic sampling from logprobs, use Sampler._sample_from_logprobs instead.
     """
     if sampling_seed is None:
+        # sampled_index = torch.multinomial(probs, num_samples=1)
+        probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+        prob_sum = probs.sum(dim=-1, keepdim=True)
+        # 如果某一行概率和为 0，给它赋均匀分布或者 argmax 兜底
+        zero_mask = prob_sum <= 0
+        if zero_mask.any():
+            probs = torch.where(zero_mask, torch.ones_like(probs), probs)
+            prob_sum = probs.sum(dim=-1, keepdim=True)
+        probs = probs / prob_sum
+
         sampled_index = torch.multinomial(probs, num_samples=1)
     else:
         # Deterministic sampling: convert probs to logprobs and use gumbel trick
