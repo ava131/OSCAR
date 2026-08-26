@@ -100,9 +100,7 @@ packed INT2 KV
 | 获得原生 INT2 加速 | 不可行 |
 | 得到稳定且高精度的 OSCAR INT2 | 未知，需要独立实验 |
 
-估计工作量：定位 kernel 失败位置约半天到 1 天；写出可运行的 sm70 reference path 约 1 到 3 天；接入 SGLang KV cache 约 3 到 7 天；精度和性能验证约 1 到 2 周。如果 Qwen3.5 的 hybrid attention、rotation 或 position 仍有语义问题，时间会更长。
-
-因此，当前应先把 INT2 关闭，解决 FP16 baseline 的乱码问题；之后再把 INT2 作为独立实验分支排查。否则 FP16 数值问题和 INT2 kernel 问题会相互干扰。
+估计工作量较大。
 
 约定：
 - “实际采用”表示能从该分支最终代码或运行脚本确认。
